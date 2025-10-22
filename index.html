@@ -1,4 +1,4 @@
-<!doctype html>
+<!doctype html>   
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8" />
@@ -587,24 +587,6 @@ button.primary:hover{filter:saturate(1.08);}
 <!-- Toast -->
 <div id="toast" class="toast"></div>
 
-<!-- === 新增：QR 掃描懸浮視窗（即時相機＋十字線＋方框） === -->
-<div id="qrBackdrop" class="backdrop">
-  <div class="modal" style="width:min(92vw,480px); background:#000; padding:0; overflow:hidden; position:relative;">
-    <button id="qrClose" class="modal-close" style="position:absolute; top:8px; right:8px; z-index:10;">×</button>
-    <video id="qrVideo" autoplay playsinline style="width:100%; height:auto; display:block;"></video>
-    <!-- 對準框 -->
-    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-      width:60%;aspect-ratio:1;border:3px solid rgba(255,255,255,.6);
-      border-radius:8px;box-shadow:0 0 20px rgba(255,255,255,.25) inset;">
-    </div>
-    <!-- 十字線 -->
-    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-      width:2px;height:60%;background:rgba(255,255,255,.85);"></div>
-    <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(90deg);
-      width:2px;height:60%;background:rgba(255,255,255,.85);"></div>
-  </div>
-</div>
-
 <script>
 /* ===== (1) 設定：換成你的 GAS URL ===== */
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwtoGYXhk6qd0XuTOUvB6YZNNzdjXoGQEl7298-Pbtc-G-qNuoLM2kTknZZOQO9qZ_Y1A/exec';
@@ -690,7 +672,7 @@ function rebuildDatalists(){
   igs.forEach(v=>{ const o=document.createElement('option'); o.value=v; dlI.appendChild(o); });
 }
 
-/* ===== (5) 數量統計 ===== */
+/* ===== (5) 統計 ===== */
 function renderStats(){
   const total = state.rows.length;
   const paid = state.rows.filter(r=> norm(r.pay_status)==='paid').length;
@@ -727,7 +709,7 @@ function renderOnlyMatches(rows){
   const grid = $('grid'); grid.innerHTML = '';
   if(!rows || !rows.length){ headMsg('查無資料 / No results', false); return; }
   headMsg(`符合 ${rows.length} 筆 / matched records`, false);
-  rows.slice().sort((a,b)=> (a.country||'').localeCompare(b.country||'') || (a.name||'').localeCompare(b.name||'')))
+  rows.slice().sort((a,b)=> (a.country||'').localeCompare(b.country||'') || (a.name||'').localeCompare(b.name||''))
     .forEach(r=> grid.appendChild(renderPerson(r)));
 }
 
@@ -972,92 +954,59 @@ function renderHiddenBar(){
 }
 $('ovUnhideAll')?.addEventListener('click', ()=>{ hiddenLeaders.clear(); renderOverview(); renderHiddenBar(); });
 
-/* ===== (9) 掃描 QR（即時相機 + 不支援時圖片備援） ===== */
+/* ===== (9) 掃描 QR ===== */
 $('btnScan').addEventListener('click', startScan);
-
 async function startScan(){
-  // 若不支援即時偵測，走備援：圖片上傳
-  if(!('BarcodeDetector' in window)){
-    showToast('裝置不支援即時掃描，改用圖片上傳');
-    const input = $('qrFile'); input.click(); return;
-  }
-
-  const backdrop = document.getElementById('qrBackdrop');
-  const video = document.getElementById('qrVideo');
-  const btnClose = document.getElementById('qrClose');
-  let stream = null;
-  let running = true;
-
-  const stop = ()=>{
-    running = false;
-    try{ stream && stream.getTracks().forEach(t=>t.stop()); }catch(_){}
-    backdrop.style.display = 'none';
-  };
-
-  // 關閉事件
-  btnClose.onclick = stop;
-  backdrop.onclick = (e)=>{ if(e.target===backdrop) stop(); };
-
-  try{
-    backdrop.style.display='flex';
-    stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' } });
-    video.srcObject = stream;
-    await video.play();
-
-    const detector = new BarcodeDetector({ formats:['qr_code'] });
-    const loop = async ()=>{
-      if(!running) return;
-      try{
-        const bmp = await createImageBitmap(video);
-        const codes = await detector.detect(bmp);
-        bmp.close();
-        if(codes && codes.length){
-          const raw = (codes[0].rawValue||'').trim();
-          if(/^\d+$/.test(raw)){  // 只接受數字（對應 item）
-            stop();
-            handleScanItem(raw);
-            return;
+  const supported = ('BarcodeDetector' in window);
+  if(supported){
+    try{
+      const detector = new window.BarcodeDetector({ formats:['qr_code'] });
+      const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'environment' }});
+      const video = document.createElement('video'); video.playsInline = true; video.srcObject = stream; await video.play();
+      const tick = async ()=>{
+        if(video.readyState >= 2){
+          const bitmap = await createImageBitmap(video);
+          const codes = await detector.detect(bitmap);
+          bitmap.close();
+          if(codes && codes.length){
+            await stopStream(stream);
+            const item = (codes[0].rawValue||'').trim();
+            handleScanItem(item); return;
           }
         }
-      }catch(_){ /* 忽略單次失敗，持續掃描 */ }
-      requestAnimationFrame(loop);
-    };
-    loop();
-    showToast('掃描中… 請將 QR 對準框中央');
-  }catch(err){
-    console.warn('Camera open failed, fallback to file:', err);
-    backdrop.style.display='none';
-    const input = $('qrFile'); input.click();
+        requestAnimationFrame(tick);
+      };
+      tick();
+      showToast('掃描中… 將 QR 對準鏡頭 / Scanning…'); return;
+    }catch(e){ console.warn('BarcodeDetector video path failed, fallback to file', e); }
   }
+  const input = $('qrFile');
+  input.onchange = async (e)=>{
+    const f = (e.target.files||[])[0];
+    if(!f){ showToast('未選取圖片 / No image selected'); return; }
+    try{
+      if(!('BarcodeDetector' in window)) throw new Error('no-detector');
+      const detector = new window.BarcodeDetector({ formats:['qr_code'] });
+      const bmp = await createImageBitmap(f);
+      const codes = await detector.detect(bmp);
+      bmp.close();
+      if(codes && codes.length){ handleScanItem((codes[0].rawValue||'').trim()); }
+      else{ showToast('解析失敗，請改用手動查找 / Parse failed, use manual search'); }
+    }catch(err){
+      console.warn(err); showToast('裝置不支援 QR 解析；請改用手動查找 / Not supported, use manual search');
+    } finally { input.value=''; }
+  };
+  input.click();
 }
-
-/* 圖片備援解析（保留原設計、非即時） */
-$('qrFile').addEventListener('change', async (e)=>{
-  const f = (e.target.files||[])[0];
-  if(!f){ showToast('未選取圖片 / No image selected'); return; }
-  try{
-    if(!('BarcodeDetector' in window)) throw new Error('no-detector');
-    const detector = new window.BarcodeDetector({ formats:['qr_code'] });
-    const bmp = await createImageBitmap(f);
-    const codes = await detector.detect(bmp);
-    bmp.close();
-    if(codes && codes.length){ handleScanItem((codes[0].rawValue||'').trim()); }
-    else{ showToast('解析失敗，請改用手動查找 / Parse failed, use manual search'); }
-  }catch(err){
-    console.warn(err); showToast('裝置不支援 QR 解析；請改用手動查找 / Not supported, use manual search');
-  } finally { e.target.value=''; }
-});
-
-/* 掃到數字 → 以 item 比對；★一律打開付款彈窗（不再依 link 開頁） */
+async function stopStream(stream){ try{ stream.getTracks().forEach(t=>t.stop()); }catch(_){ } }
 function handleScanItem(itemStr){
   if(!itemStr){ showToast('QR 無內容 / Empty QR'); return; }
   const row = state.indexByItem.get(String(itemStr));
   if(!row){ showToast('查無此 ITEM · 請確認 / Item not found'); return; }
-  // 需求：掃描到後直接進付款彈窗（未付款 / 已付款 + 送出）
   openPayModal(row);
 }
 
-/* ===== (10) 重新整理 ===== */
+/* ===== (10) 重新整理 & 故障診斷 ===== */
 $('btnRefresh').addEventListener('click', ()=> fetchRoster()); // 診斷按鈕暫不運作（已於 HTML 隱藏並 disabled）
 
 /* ===== (11) 已繳費/未繳費清單 ===== */
@@ -1097,7 +1046,7 @@ function openListModal(kind){
     listTitle.textContent = `未繳費名單 / Unpaid List（${rows.length}）`;
     listBody.innerHTML = buildUnpaidTable(rows);
   }
-  applyListWidths();
+  applyListWidths(); 
   initListSliders();        /* ⬅ 新增：開窗後初始化滑桿 */
   listBackdrop.style.display='flex';
 }
@@ -1349,9 +1298,9 @@ async function saveNotes(){
   const payloads = [];
   for(const tr of rows){
     const item = tr.getAttribute('data-item');
-    const confirmEl = tr.querySelector('input.note-checkbox');
-    const selectEl = tr.querySelector('select.note-select');
-    const inputEl = tr.querySelector('input.note-input');
+    const confirmEl = tr.querySelector('.note-checkbox');
+    const selectEl = tr.querySelector('.note-select');
+    const inputEl = tr.querySelector('.note-input');
     const confirmVal = !!(confirmEl && confirmEl.checked);
     const methodVal = selectEl ? selectEl.value : '';
     const noteVal = inputEl ? inputEl.value : '';
